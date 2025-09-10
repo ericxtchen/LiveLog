@@ -1,0 +1,24 @@
+syntax = "proto3";
+package streamlogs;
+option go_package = "golang-services/api/proto/streamlogs;streamlogs";
+
+service StreamLogs {
+  rpc StreamLogEntries (stream LogEntry) returns (stream LogControl);
+}
+
+message LogEntry {
+  string timestamp = 1;
+  string level = 2;
+  string message = 3;
+}
+
+message LogControl {
+  enum Command {
+    NONE = 0;        // no-op
+    PAUSE = 1;       // pause sending logs
+    RESUME = 2;      // resume sending logs
+    CHANGE_FILTER = 3; // change filter criteria
+  }
+  Command command = 1;
+  string message = 2; // optional human-readable info
+}
