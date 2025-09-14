@@ -3,6 +3,7 @@ package agentservice
 import (
 	"context"
 	"log"
+	"time"
 
 	pb "github.com/ericxtchen/LiveLog/golang-services/api/proto"
 	collection "github.com/ericxtchen/LiveLog/golang-services/internal/agent_service/data_collection"
@@ -31,7 +32,8 @@ func Start() {
 
 		go func() {
 			for logEntry := range t.Lines {
-				if err := stream.Send(&pb.LogEntry{Message: logEntry.Text}); err != nil {
+				// TODO: Add log level detection
+				if err := stream.Send(&pb.LogEntry{Timestamp: logEntry.Time.Format(time.RFC3339), Message: logEntry.Text}); err != nil {
 					log.Fatalf("Error sending log entry: %v", err)
 				}
 			}

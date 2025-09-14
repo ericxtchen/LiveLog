@@ -27,6 +27,7 @@ func (s *server) StreamLogEntries(stream pb.StreamLogs_StreamLogEntriesServer) e
 
 	// Listen for incoming log entries and produce to Kafka
 	for {
+		// Receive log entry from stream
 		entry, err := stream.Recv()
 		if err == io.EOF {
 			return nil
@@ -36,9 +37,21 @@ func (s *server) StreamLogEntries(stream pb.StreamLogs_StreamLogEntriesServer) e
 		}
 		fmt.Printf("[%s] %s: %s\n", entry.Timestamp, entry.Level, entry.Message)
 
+		// Validate log entry
+		err = ValidateLogEntry(entry)
+		if err != nil {
+			log.Printf("Invalid log entry: %v", err)
+			continue
+		}
+
+		// Produce log entry to Kafka
 		record := &kgo.Record{
 			Topic: producerTopic,
-			Value: []byte(entry.Timestamp + " " + entry.Level + " " + entry.Message),
+			Value: []byte(`{
+				"timestamp": entry.Timestamp,
+				"level": entry.Level,
+				"message": entry.Message
+			}`),
 		}
 
 		cl.Produce(stream.Context(), record, func(r *kgo.Record, err error) {
