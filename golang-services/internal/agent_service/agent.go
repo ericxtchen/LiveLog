@@ -20,7 +20,7 @@ func Start() {
 
 	client := pb.NewStreamLogsClient(conn)
 	for {
-		t, err := collection.TailLog("/var/log/syslog") // how do we expand to more files that are being tailed within a system?
+		t, err := collection.TailLog("/var/log/syslog") // expand to log multiple files, let user specify path of file(s)
 		if err != nil {
 			panic(err)
 		}
