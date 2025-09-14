@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-func Start(entry *pb.LogEntry) error {
+func Start() {
 	lis, err := net.Listen("tcp", ":8081")
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
@@ -20,5 +20,4 @@ func Start(entry *pb.LogEntry) error {
 	if err := s.Serve(lis); err != nil {
 		panic(err)
 	}
-	return nil
 }
