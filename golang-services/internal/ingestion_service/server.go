@@ -4,7 +4,7 @@ import (
 	pb "github.com/ericxtchen/LiveLog/golang-services/api/proto"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"fmt"
+	"encoding/json"
 	"io"
 	"log"
 )
@@ -35,23 +35,26 @@ func (s *server) StreamLogEntries(stream pb.StreamLogs_StreamLogEntriesServer) e
 		if err != nil {
 			log.Fatalf("Error receiving log entry: %v", err)
 		}
-		fmt.Printf("[%s] %s: %s\n", entry.Timestamp, entry.Level, entry.Message)
+		log.Printf("[%s] %s: %s\n", entry.Timestamp, entry.Level, entry.Message)
 
 		// Validate log entry
 		err = ValidateLogEntry(entry)
 		if err != nil {
 			log.Printf("Invalid log entry: %v", err)
-			continue
+			continue // Skip invalid entries, should notify user somehow
 		}
 
 		// Produce log entry to Kafka
+		log_entry := &pb.LogEntry{Timestamp: entry.Timestamp, Level: entry.Level, Message: entry.Message}
+		json_log_entry, err := json.Marshal(log_entry)
+		if err != nil {
+			log.Printf("failed to marshal log entry: %v", err)
+			continue
+		}
+		// Is sending JSON through Kafka faster ot sending protobuf directly and making log_service handle unmarshalling and conversion into JSON faster?
 		record := &kgo.Record{
 			Topic: producerTopic,
-			Value: []byte(`{
-				"timestamp": entry.Timestamp,
-				"level": entry.Level,
-				"message": entry.Message
-			}`),
+			Value: json_log_entry,
 		}
 
 		cl.Produce(stream.Context(), record, func(r *kgo.Record, err error) {

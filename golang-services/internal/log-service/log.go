@@ -1,9 +1,9 @@
 package logservice
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"log"
 	"net/http"
 
@@ -58,15 +58,24 @@ func Start() {
 			continue
 		}
 
+		// Process each record and index into OpenSearch
 		fetches.EachRecord(func(rec *kgo.Record) {
-			// Process each record and index into OpenSearch
-			// TODO: This will probably have to change
-			// TODO: Add indexing into OpenSearch
-			var entry log_entry
-			err := json.Unmarshal(rec.Value, &entry)
+			// TODO: Do bulk insdexing instead of single indexing
+			res, err := opensearch_client.Index(
+				"logs",
+				bytes.NewReader(rec.Value),
+				opensearch_client.Index.WithDocumentType("_doc"),
+				opensearch_client.Index.WithRefresh("true"),
+				opensearch_client.Index.WithContext(context.Background()),
+			)
 			if err != nil {
-				log.Printf("failed to unmarshal record value: %v", err)
-				return
+				log.Printf("Error indexing document: %s", err)
+			}
+			defer res.Body.Close()
+			if res.IsError() {
+				log.Printf("Error indexing document: %s", res.String())
+			} else {
+				log.Printf("Document indexed successfully: %s", res.String())
 			}
 			println(string(rec.Value))
 		})

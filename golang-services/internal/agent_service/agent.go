@@ -3,6 +3,7 @@ package agentservice
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	pb "github.com/ericxtchen/LiveLog/golang-services/api/proto"
@@ -11,6 +12,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+var levels = []string{"DEBUG", "INFO", "WARN", "ERROR"}
 
 func Start() {
 	conn, err := grpc.NewClient("localhost:8081", grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -32,8 +35,14 @@ func Start() {
 
 		go func() {
 			for logEntry := range t.Lines {
-				// TODO: Add log level detection
-				if err := stream.Send(&pb.LogEntry{Timestamp: logEntry.Time.Format(time.RFC3339), Message: logEntry.Text}); err != nil {
+				var log_level string = "INFO" // default log level
+				for _, level := range levels {
+					if strings.Contains(logEntry.Text, level) {
+						log_level = level
+						break
+					}
+				}
+				if err := stream.Send(&pb.LogEntry{Timestamp: logEntry.Time.Format(time.RFC3339), Level: log_level, Message: logEntry.Text}); err != nil {
 					log.Fatalf("Error sending log entry: %v", err)
 				}
 			}

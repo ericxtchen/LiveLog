@@ -9,8 +9,15 @@ import (
 )
 
 var controlChars = regexp.MustCompile(`[\x00-\x1F\x7F]`)
+var validLevels = map[string]bool{
+	"DEBUG": true,
+	"INFO":  true,
+	"WARN":  true,
+	"ERROR": true,
+}
 
-func ValidateLogEntry(entry *pb.LogEntry) error { // TODO: We are self hosting the ingestion service as a SaaS, so we need to send the error back to the dashboard to the user.
+// TODO: We are self hosting the ingestion service as a SaaS, so we need to send the error back to the dashboard to the user.
+func ValidateLogEntry(entry *pb.LogEntry) error {
 	// Basic validation: check if required fields are present
 	if entry.Timestamp == "" || entry.Message == "" {
 		return fmt.Errorf("invalid log entry: missing required fields")
@@ -20,6 +27,9 @@ func ValidateLogEntry(entry *pb.LogEntry) error { // TODO: We are self hosting t
 	}
 	if entry.Message == "" {
 		return fmt.Errorf("invalid log entry: missing message")
+	}
+	if !validLevels[entry.GetLevel()] {
+		return fmt.Errorf("invalid log level")
 	}
 	if _, err := time.Parse(time.RFC3339, entry.GetTimestamp()); err != nil {
 		return fmt.Errorf("invalid log entry: timestamp format is incorrect")
