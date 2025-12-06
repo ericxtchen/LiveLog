@@ -1,6 +1,8 @@
 package ingestionservice
 
 import (
+	"time"
+
 	pb "github.com/ericxtchen/LiveLog/golang-services/api/proto"
 	"github.com/twmb/franz-go/pkg/kgo"
 
@@ -43,10 +45,26 @@ func (s *server) StreamLogEntries(stream pb.StreamLogs_StreamLogEntriesServer) e
 			log.Printf("Invalid log entry: %v", err)
 			continue // Skip invalid entries, should notify user somehow
 		}
+		// Parse timestamp into an actual datetime object
+		ts, err := time.Parse(time.RFC3339, entry.Timestamp)
+		if err != nil {
+			log.Printf("Invalid timestamp format '%s', using current time: %v", entry.Timestamp, err)
+			ts = time.Now()
+		}
+		// Create custom struct to insert into OpenSearch that supports actual timestamping
+		openSearchDoc := struct {
+			Timestamp time.Time `json:"@timestamp"`
+			Level     string    `json:"level"`
+			Message   string    `json:"message"`
+		}{
+			Timestamp: ts,
+			Level:     entry.Level,
+			Message:   entry.Message,
+		}
 
 		// Produce log entry to Kafka
-		log_entry := &pb.LogEntry{Timestamp: entry.Timestamp, Level: entry.Level, Message: entry.Message}
-		json_log_entry, err := json.Marshal(log_entry)
+		//log_entry := &pb.LogEntry{Timestamp: entry.Timestamp, Level: entry.Level, Message: entry.Message}
+		json_log_entry, err := json.Marshal(openSearchDoc)
 		if err != nil {
 			log.Printf("failed to marshal log entry: %v", err)
 			continue

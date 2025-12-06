@@ -1,83 +1,119 @@
-package logservice
+package main
 
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
+	"fmt"
 	"log"
-	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/opensearch-project/opensearch-go"
+	"github.com/opensearch-project/opensearch-go/opensearchapi"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-type log_entry struct {
-	Timestamp string
-	Level     string
-	Message   string
-}
+const (
+	BulkBatchSize = 500
+)
 
-func Start() {
-	// Initialize Kafka consumer
-	var seeds = []string{"localhost:9092"}
-	var consumerTopic = "logs"
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
+	// Kafka client
 	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(seeds...),
-		kgo.ConsumeTopics(consumerTopic),
+		kgo.SeedBrokers("localhost:9092"),
+		kgo.ConsumerGroup("log-consumer"),
+		kgo.ConsumeTopics("logs"),
 	)
 	if err != nil {
-		panic(err)
+		log.Fatalf("failed to create kafka client: %v", err)
 	}
 	defer cl.Close()
 
-	// Initialize OpenSearch client
-	opensearch_client, err := opensearch.NewClient(opensearch.Config{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
+	// OpenSearch client
+	osClient, err := opensearch.NewClient(opensearch.Config{
 		Addresses: []string{"http://localhost:9200"},
 	})
 	if err != nil {
-		log.Fatalf("Error creating OpenSearch client: %s", err)
+		log.Fatalf("failed to create opensearch client: %v", err)
 	}
 
-	// Verify OpenSearch connection
-	_, err = opensearch_client.Info()
-	if err != nil {
-		log.Fatalf("Error getting OpenSearch info: %s", err)
-	}
+	var bulkBuffer bytes.Buffer
+	recordCount := 0
+	flushTicker := time.NewTicker(1 * time.Second)
+	defer flushTicker.Stop()
 
-	// Continuously poll for new messages
 	for {
-		fetches := cl.PollFetches(context.Background())
-		if errs := fetches.Errors(); len(errs) > 0 {
-			for _, e := range errs {
-				// Handle errors
-				log.Printf("error fetching records: %v", e)
+		pollCtx, pollCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		fetches := cl.PollFetches(pollCtx)
+		pollCancel()
+
+		if err := fetches.Err(); err != nil {
+			if err == context.Canceled && ctx.Err() != nil { // handle shutdown and other errors
+				fmt.Println("Shutting down consumer")
+				flushBulk(&bulkBuffer, osClient, "logs") // flush remaining
 			}
-			continue
 		}
 
-		// Process each record and index into OpenSearch
-		fetches.EachRecord(func(rec *kgo.Record) {
-			// TODO: Do bulk insdexing instead of single indexing
-			res, err := opensearch_client.Index(
-				"logs",
-				bytes.NewReader(rec.Value),
-				opensearch_client.Index.WithDocumentType("_doc"),
-				opensearch_client.Index.WithRefresh("true"),
-				opensearch_client.Index.WithContext(context.Background()),
-			)
-			if err != nil {
-				log.Printf("Error indexing document: %s", err)
+		fetches.EachRecord(func(record *kgo.Record) {
+			// Bulk API expects two lines per document
+			// 1. action metadata
+			bulkBuffer.WriteString(`{"index":{}}` + "\n")
+			// 2. document itself
+			bulkBuffer.Write(record.Value)
+			bulkBuffer.WriteString("\n")
+
+			recordCount++
+
+			if recordCount >= BulkBatchSize {
+				flushBulk(&bulkBuffer, osClient, "logs")
+				recordCount = 0
 			}
-			defer res.Body.Close()
-			if res.IsError() {
-				log.Printf("Error indexing document: %s", res.String())
-			} else {
-				log.Printf("Document indexed successfully: %s", res.String())
-			}
-			println(string(rec.Value))
 		})
+
+		select {
+		case <-flushTicker.C:
+			if recordCount > 0 {
+				flushBulk(&bulkBuffer, osClient, "logs")
+				recordCount = 0
+			}
+		default:
+		}
 	}
+}
+
+func flushBulk(buf *bytes.Buffer, client *opensearch.Client, indexName string) {
+	if buf.Len() == 0 {
+		return
+	}
+
+	blk := opensearchapi.BulkRequest{
+		Index: indexName,
+		Body:  strings.NewReader(buf.String()),
+	}
+
+	res, err := blk.Do(context.Background(), client)
+	if err != nil {
+		log.Printf("Error sending bulk insert request: %s", err)
+		// Try retrying to insert
+	} else {
+		defer res.Body.Close()
+		if res.IsError() {
+			log.Printf("Error inserting into opensearch: %s", res.String())
+		}
+	}
+
+	buf.Reset()
 }
